@@ -1,6 +1,12 @@
 # loggate
 
+![tests](https://img.shields.io/badge/tests-19%20passing-brightgreen)
+![python](https://img.shields.io/badge/python-3.10%2B-blue)
+![license](https://img.shields.io/badge/license-MIT-lightgrey)
+
 **A self-training gate that decides which security events are worth an LLM's attention - and how long it stays blind to an attack it has never seen.**
+
+> **TL;DR** - On real network traffic, a gate that learns only from the LLM's own verdicts cuts LLM calls by ~90% at 99% recall on known attacks. Against an attack class it has never seen, it is **permanently blind unless it randomly audits what it drops**; a 5% audit restores 90% detection within ~17k flows. The audit rate is a product dial with a price on each side.
 
 Security teams are adopting LLMs to triage alerts and explain incidents. An
 LLM reads one event well; it cannot read the hundreds of thousands a network
@@ -44,8 +50,10 @@ The forwarding policy is three rules, in order:
    hand; here it is a parameter.
 
 Every verdict goes into a sliding buffer of the last `buffer_max` verdicts;
-every `retrain_every` verdicts the classifier is refit (`class_weight="balanced"`,
-features standardized at fit time and folded back into the weights).
+every `retrain_every` verdicts the classifier is refit with
+`class_weight="balanced"`. For network flows, whose features span ten orders
+of magnitude, standardization is applied at fit time and folded back into the
+weights, so scoring stays one dot product on raw features.
 
 The LLM is **simulated**: it returns the ground-truth label, optionally with a
 configurable miss rate and false-alarm rate, which keeps 575k "LLM calls"
@@ -136,6 +144,17 @@ labels than there are real anomalies. A teacher's precision on the rare class
 matters far more than its overall accuracy.
 
 Full tables (threshold sweep, robustness, ablations): `results/*.csv`.
+
+## What is and isn't new here
+
+The building blocks are well known. A cheap model in front of an expensive one
+is a *cascade*; the random audit is *exploration*; a learner that only sees the
+cases it chose to inspect suffers from *selective labels*. None of that is
+original to this repo. What this repo adds is the application and the
+measurement: using the LLM's verdicts as the only training signal for a
+security triage gate, and quantifying how long such a gate stays blind to a
+new attack class as a function of the audit rate, on real attack traffic.
+The numbers in the table above are the contribution; the algorithm is not.
 
 ## Honest caveats
 
