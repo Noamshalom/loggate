@@ -1,0 +1,9 @@
+setting,call_rate,recall
+perfect LLM,0.0400,0.9963
+LLM misses 10% of anomalies,0.0403,0.9977
+LLM misses 20% of anomalies,0.0405,0.9977
+LLM misses 40% of anomalies,0.0390,0.9420
+LLM false-alarms on 1% of normals,0.0404,0.9987
+LLM false-alarms on 5% of normals,1.0000,1.0000
+frozen after first fit,0.0432,1.0000
+no random audit (explore=0),0.0304,0.9937
