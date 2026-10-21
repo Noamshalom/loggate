@@ -6,3 +6,4 @@ __pycache__/
 build/
 dist/
 results/run.log
+results/security_runs.jsonl

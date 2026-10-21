@@ -1,154 +1,199 @@
 # loggate
 
-**A self-training gatekeeper that decides which log sessions are worth an LLM's attention.**
+**A self-training gate that decides which security events are worth an LLM's attention - and how long it stays blind to an attack it has never seen.**
 
-LLMs are good at reading a log session and explaining what went wrong. They are
-also far too expensive to run on every session a cluster produces, when ~97% of
-those sessions are routine. `loggate` puts a cheap, local classifier in front
-of the LLM and lets it learn **from the LLM's own verdicts** which sessions are
-routine, so it can stop forwarding them. No human labels, no offline training
-phase: the gate starts out forwarding everything and takes over the traffic as
-it learns.
+Security teams are adopting LLMs to triage alerts and explain incidents. An
+LLM reads one event well; it cannot read the hundreds of thousands a network
+produces per day, and at per-call pricing nobody wants it to. `loggate` puts a
+cheap local classifier in front of the LLM and lets it learn **from the LLM's
+own verdicts** what routine traffic looks like, so it can stop forwarding it.
+No human labels, no offline training: the gate forwards everything at first
+and takes over the traffic as it learns.
 
 ```
-log session ──► Gate (one dot product) ──[suspicious?]──► LLM (expensive)
-                   ▲                                          │
-                   └──────── learns from every verdict ◄──────┘
+event ──► Gate (one dot product) ──[suspicious?]──► LLM (expensive)
+             ▲                                          │
+             └──────── learns from every verdict ◄──────┘
 ```
 
-On the HDFS benchmark (575 059 real sessions, 2.9% anomalous) the gate ends up
-forwarding **4.0% of sessions** while **99.6% of anomalies
-still reach the LLM** - a 25× reduction in LLM calls, learned on the fly.
+Two questions, two datasets:
 
-![learning curve](results/learning_curve.png)
+1. **How much does it save?** On 575k HDFS log sessions the gate ends up
+   forwarding **4.0%** of traffic while **99.6%** of anomalies still reach the LLM.
+2. **What happens when a *new kind* of attack arrives?** On CICIDS2017 network
+   traffic a gate trained during password brute-force attacks meets a DDoS it
+   has never seen. Without a random audit it **never** catches it. The audit
+   rate is the dial: with fast retraining and a **5% audit**, 90% of DDoS flows reach the LLM after
+   **~17k Friday flows** (15-20k over 3 seeds), at a routine cost of 11% of traffic.
+
+![unseen attack](results/security_ddos.png)
 
 ## How it works
 
-Each session is turned into a vector of event-type counts (log-scaled) plus
-its length. The gate is logistic regression on that vector: scoring a session
-is one dot product, which is the whole point of a *cheap* gate.
+The gate is logistic regression over a feature vector - event-type counts for
+log sessions, CICFlowMeter flow statistics for network traffic. Scoring is one
+dot product, which is the point of a *cheap* gate.
 
 The forwarding policy is three rules, in order:
 
-1. **Warm-up.** The first `warmup` sessions are forwarded unconditionally -
-   the gate knows nothing yet.
-2. **Threshold.** Forward if `p(anomaly) > threshold`. This is the cost/recall
-   dial.
+1. **Warm-up.** The first `warmup` events are forwarded unconditionally.
+2. **Threshold.** Forward if `p(attack) > threshold`.
 3. **Random audit.** Forward a random `explore` fraction of what would have
-   been dropped. A dropped session never gets a verdict, so without this the
-   gate could never discover it is wrongly dropping some kind of anomaly. Ops
-   teams already do this by hand; here it costs ~1% of traffic.
+   been dropped. A dropped event never gets a verdict, so without the audit
+   the gate can only learn from what it already forwards. Ops teams do this by
+   hand; here it is a parameter.
 
-Every verdict goes into a buffer, and every `retrain_every` verdicts the
-classifier is refit on the whole buffer (`class_weight="balanced"`, because
-anomalies are a small minority of what the gate sees).
+Every verdict goes into a sliding buffer of the last `buffer_max` verdicts;
+every `retrain_every` verdicts the classifier is refit (`class_weight="balanced"`,
+features standardized at fit time and folded back into the weights).
 
 The LLM is **simulated**: it returns the ground-truth label, optionally with a
-configurable miss rate and false-alarm rate. That keeps 575k "LLM calls"
+configurable miss rate and false-alarm rate, which keeps 575k "LLM calls"
 reproducible and free. Swapping in a real model is a one-class change
 (`loggate/oracle.py`).
 
-## Results
+## Result 1 - an attack the gate has never seen (CICIDS2017)
 
-All numbers are steady state (after the gate has learned), on the full stream,
-seed 0. Reproduce with `python scripts/run_experiments.py` (a few minutes).
+CICIDS2017 recorded a week of traffic on a small corporate network while a
+red team ran real attacks. We replay two days in order:
 
-### Cost vs recall - the threshold dial
+| phase | traffic | attack | share |
+|---|---|---|---:|
+| Tuesday | 446k flows | FTP / SSH password brute-force | 3.1% |
+| Friday afternoon | 101k flows | DDoS - absent from Tuesday | 3.0% (subsampled, see below) |
+
+Destination port is **excluded** from the features: every Tuesday attack hits
+port 21 or 22, and a gate that learns "port 22 = attack" has learned a shortcut,
+not behaviour. Flow statistics are signed-log transformed. Friday is 57% DDoS
+in the raw capture because the red team ran a flood; we subsample DDoS to 3%
+so the gate faces the base rate it would see in real life.
+
+Mean over 3 seeds. *Routine cost* is the share of Tuesday traffic forwarded
+after the gate has learned; *time to detect* is how much Friday traffic passes
+before 90% of DDoS flows reach the LLM.
+
+| retraining | audit | routine cost (Tue) | brute-force caught | Friday cost | DDoS ≥ 90% caught after |
+|---|---:|---:|---:|---:|---|
+| slow | 0% | 5.4% | 99.4% | 1.0% | never |
+| slow | 1% | 6.5% | 99.4% | 2.5% | never |
+| slow | 2% | 7.6% | 99.4% | 3.9% | never |
+| slow | 5% | 10.5% | 99.4% | 8.7% | 62k (55-75k) Friday flows |
+| fast | 0% | 2.6% | 78.4% | 0.1% | never |
+| fast | 1% | 6.7% | 99.4% | 4.0% | never in 2 of 3 seeds (75k in the third) |
+| fast | 2% | 7.9% | 99.4% | 5.9% | 63k (45-85k) Friday flows |
+| fast | 5% | 11.0% | 99.5% | 9.5% | **17k (15-20k) Friday flows** |
+
+*Slow* = refit every 2 000 verdicts on the last 50 000; *fast* = every 200 on the last 10 000. Ranges are min-max over seeds.
+
+Three things to read off this table:
+
+* **No audit means permanent blindness.** The gate learned Tuesday's attacks
+  perfectly and forwards ~1% of Friday - all of it benign. DDoS flows never
+  score above threshold, never get a verdict, and the gate never finds out.
+* **The audit rate buys detection time.** With fast retraining, going from a 2% to a 5% audit
+  costs 3 more points of routine traffic and cuts time-to-detect from ~63k
+  to ~17k flows. At 1% the gate usually never gets there within the day.
+* **Fast retraining without an audit is worse than slow.** With no audit, the fast gate catches only 78% of
+  the *known* brute-force attacks (vs 99% for the slow gate) and forwards
+  0.06% of Friday.
+  A gate that only sees what it already chose to forward narrows its own view
+  of the world - the selection-bias loop the audit exists to break.
+
+For a product this is one dial with a price on each side: audit traffic costs
+LLM calls every day; a longer time-to-detect costs whatever a day of undetected
+DDoS costs. Neither number is in this repo; the trade-off curve is.
+
+## Result 2 - how much it saves at scale (HDFS)
+
+575 059 real HDFS log sessions (2.93% anomalous), replayed as one shuffled
+stream. Steady state, seed 0:
 
 | threshold | sessions forwarded | anomalies reaching LLM |
 |----------:|-------------------:|-----------------------:|
 | 0.5 | 3.93% | 98.27% |
-| 0.3 | 4.00% | 99.50% |
-| 0.2 | 4.00% | 99.63% |
-| 0.1 | 4.07% | 99.87% |
-| 0.05 | 4.10% | 99.90% |
+| 0.2 (default) | 4.00% | 99.63% |
 | 0.02 | 4.11% | 99.93% |
 
-The anomaly rate is 2.93%, so ~4% forwarding is close to the floor; the gap is
-the 1% random audit plus false alarms. Note how little the dial moves: going
-from τ=0.5 to τ=0.02 costs 0.18 points of traffic and buys 1.7 points of
-recall. The classifier is confident enough that a low threshold is nearly
-free, so the default (0.2) errs on the side of recall.
+![learning curve](results/learning_curve.png)
 
-![threshold sweep](results/threshold_sweep.png)
+The gate goes from forwarding everything to ~4% within the first 10k sessions
+and stays on the anomaly-rate floor for the remaining 565k.
 
-### Robustness - what if the LLM is wrong?
+**What if the LLM is wrong?** Misses are cheap, false alarms are fatal:
 
 | LLM behaviour | sessions forwarded | anomalies reaching LLM |
 |---------------|-------------------:|-----------------------:|
 | perfect LLM | 4.00% | 99.63% |
-| LLM misses 10% of anomalies | 4.03% | 99.77% |
-| LLM misses 20% of anomalies | 4.05% | 99.77% |
-| LLM misses 40% of anomalies | 3.90% | 94.20% |
-| LLM false-alarms on 1% of normals | 4.04% | 99.87% |
-| LLM false-alarms on 5% of normals | 100.00% | 100.00% |
-| frozen after first fit | 4.32% | 100.00% |
-| no random audit (explore=0) | 3.04% | 99.37% |
+| misses 20% of anomalies | 4.05% | 99.77% |
+| misses 40% of anomalies | 3.90% | 94.20% |
+| false-alarms on 1% of normals | 4.04% | 99.87% |
+| false-alarms on 5% of normals | 100.00% | 100.00% |
 
-The asymmetry is the interesting part. **Misses are cheap, false alarms are
-fatal.** An LLM that overlooks 20% of anomalies just gives the gate fewer
-positive examples, and the gate barely notices. An LLM that false-alarms on 5%
-of normals breaks the gate completely - and it has to: at a 2.9% base rate, a
-5% false-alarm rate produces *more* wrong "anomaly" labels than there are real
-anomalies, so most of what the gate is told is an anomaly isn't one. This is a
-base-rate fact, not a modelling choice: a teacher's precision on the rare class
+An LLM that overlooks 20% of anomalies just gives the gate fewer positive
+examples. An LLM that false-alarms on 5% of normals breaks the gate - and it
+has to: at a 2.9% base rate, 5% false alarms produce *more* wrong "anomaly"
+labels than there are real anomalies. A teacher's precision on the rare class
 matters far more than its overall accuracy.
 
-Two ablations. Freezing the gate after its first fit (2 000 verdicts) still
-works - a bit more conservative (4.32% forwarded) because it was fit on less
-data; this stream is shuffled, so there is no drift for continual retraining
-to track. Disabling the random audit saves its ~1% of traffic but recall drops
-from 99.63% to 99.37%: even with no drift, the gate benefits from occasionally
-seeing what it would have dropped.
+Full tables (threshold sweep, robustness, ablations): `results/*.csv`.
 
 ## Honest caveats
 
-* **HDFS anomalies are easy.** Count features separate them almost linearly
-  (supervised logistic regression gets F1 ≈ 0.96 in the literature). The
-  contribution here is not the classifier; it is the cascade: learning the gate
-  from the expensive stage's verdicts, the audit loop, and the cost/recall
-  framing.
 * **The LLM is simulated.** Its error modes are parameters, not measurements.
-* **The stream is shuffled.** Real logs drift; the audit and periodic retrain
-  are designed for that, but it is not demonstrated here.
+* **Lab data.** CICIDS2017 is a testbed capture, not a customer network; HDFS
+  anomalies are system faults, not attacks, and are nearly linearly separable.
+  The contribution is the cascade - learning from the expensive stage, the
+  audit loop, and the time-to-detect framing - not the classifier.
+* **Two attack classes.** "Never seen" is tested on one transition
+  (brute-force → DDoS). Other transitions may behave differently.
 * **Recall is "reached the LLM".** The gate's job is to make sure the LLM sees
-  anomalies, not to diagnose them.
+  attacks, not to diagnose them.
 
 ## Run it
 
 ```bash
 pip install -e ".[dev]"
-scripts/get_data.sh                  # ~30 MB, HDFS sessions in DeepLog format
-python scripts/run_experiments.py    # writes results/*.csv and *.png
-pytest
+pytest                                   # 19 tests, no data needed
+
+scripts/get_data.sh                      # HDFS sessions, ~30 MB
+python scripts/run_experiments.py        # Result 2, ~10 min
+
+# Result 1: download MachineLearningCSV.zip from
+# https://www.unb.ca/cic/datasets/ids-2017.html and put these two files in data/cicids2017/:
+#   Tuesday-WorkingHours.pcap_ISCX.csv   Friday-WorkingHours-Afternoon-DDos.pcap_ISCX.csv
+python scripts/run_security.py           # 8 configs x 3 seeds, ~1 h on 2 cores; resumable
 ```
 
 ```python
 from loggate import Gate, GateConfig, SimulatedLLM, Cascade
-from loggate.data import load_stream
+from loggate.cicids import load_phases
 
-cascade = Cascade(Gate(GateConfig(threshold=0.2)), SimulatedLLM())
-for ex in load_stream("data", limit=50_000):
-    forwarded, reason = cascade.step(ex)     # reason ∈ {warmup, suspicious, audit, dropped}
+tuesday, friday = load_phases("data/cicids2017")
+cascade = Cascade(Gate(GateConfig(explore=0.05, standardize=True)), SimulatedLLM())
+for flow in tuesday + friday:
+    forwarded, reason = cascade.step(flow)   # reason ∈ {warmup, suspicious, audit, dropped}
 ```
 
 ## Layout
 
 ```
 loggate/
-  data.py       load HDFS sessions as a labelled, shuffled stream
-  features.py   session → count vector (log1p) + log length
   gate.py       classifier + forwarding policy (warm-up / threshold / audit)
-  oracle.py     simulated LLM with miss and false-alarm rates
   cascade.py    run a stream through gate + LLM, record per-window stats
-scripts/        get_data.sh, run_experiments.py
+  oracle.py     simulated LLM with miss and false-alarm rates
+  data.py       HDFS sessions as a labelled, shuffled stream
+  features.py   log session → count vector
+  cicids.py     CICIDS2017 flows → features; Tuesday / Friday phases
+scripts/        get_data.sh, run_experiments.py (HDFS), run_security.py (CICIDS)
 tests/          pytest, no data needed
-results/        CSVs and plots from the full run
+results/        CSVs and plots from the full runs
 ```
 
 ## Data
 
-HDFS sessions preprocessed by the DeepLog authors
-([wuyifan18/DeepLog](https://github.com/wuyifan18/DeepLog)) from the Loghub
-HDFS_v1 dataset ([logpai/loghub](https://github.com/logpai/loghub)). DeepLog's
-train/test split is not used: everything is merged into one labelled stream.
+* CICIDS2017, Canadian Institute for Cybersecurity, University of New Brunswick
+  ([unb.ca/cic/datasets/ids-2017](https://www.unb.ca/cic/datasets/ids-2017.html)).
+  Not redistributed here; download requires a name and e-mail.
+* HDFS sessions preprocessed by the DeepLog authors
+  ([wuyifan18/DeepLog](https://github.com/wuyifan18/DeepLog)) from Loghub
+  ([logpai/loghub](https://github.com/logpai/loghub)).

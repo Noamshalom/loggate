@@ -66,7 +66,7 @@ class Cascade:
 
     def step(self, example: Example) -> tuple[bool, str]:
         """Process one session.  Returns (forwarded?, reason)."""
-        x = featurize(example.session)
+        x = example.x if example.x is not None else featurize(example.session)
         forward, reason = self.gate.should_forward(x)
         if forward:
             verdict = self.llm.judge(example.session, example.label)

@@ -23,7 +23,9 @@ from __future__ import annotations
 import random
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterator, List, Sequence
+from typing import Iterator, List, Optional, Sequence
+
+import numpy as np
 
 Session = List[int]
 
@@ -34,10 +36,12 @@ FILES = {
 }
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, eq=False)
 class Example:
-    session: Session
+    session: Optional[Session]  # raw event sequence (HDFS); None when features are precomputed
     label: int                  # ground truth; only the oracle is allowed to look at it
+    x: Optional[np.ndarray] = None   # precomputed feature vector (network flows)
+    tag: str = ""               # attack type or other annotation, for reporting only
 
 
 def read_sessions(path: Path) -> List[Session]:

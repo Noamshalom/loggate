@@ -1,0 +1,9 @@
+cadence,audit,tuesday_call_rate,tuesday_recall,friday_call_rate,ddos_detected_90pct_after_flows,seeds
+"slow retrain (every 2000 verdicts, 50k memory)",0.0,0.0538,0.9942,0.0104,never,3
+"slow retrain (every 2000 verdicts, 50k memory)",0.01,0.0651,0.9943,0.0246,never,3
+"slow retrain (every 2000 verdicts, 50k memory)",0.02,0.0758,0.9945,0.0390,never,3
+"slow retrain (every 2000 verdicts, 50k memory)",0.05,0.1055,0.9944,0.0869,62k,3
+"fast retrain (every 200 verdicts, 10k memory)",0.0,0.0265,0.7844,0.0006,never,3
+"fast retrain (every 200 verdicts, 10k memory)",0.01,0.0674,0.9940,0.0401,75k (2/3 seeds never),3
+"fast retrain (every 200 verdicts, 10k memory)",0.02,0.0789,0.9944,0.0593,63k,3
+"fast retrain (every 200 verdicts, 10k memory)",0.05,0.1097,0.9949,0.0951,17k,3

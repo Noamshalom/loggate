@@ -38,7 +38,8 @@ from __future__ import annotations
 import math
 import random
 from dataclasses import dataclass
-from typing import List, Optional
+from collections import deque
+from typing import Deque, Optional
 
 import numpy as np
 from sklearn.linear_model import LogisticRegression
@@ -53,6 +54,7 @@ class GateConfig:
     explore: float = 0.01       # random-audit probability for sessions below threshold
     retrain_every: int = 2000   # refit after this many new verdicts
     buffer_max: int = 50_000    # keep only the most recent verdicts: bounds refit cost, follows drift
+    standardize: bool = False   # z-score features at fit time (needed when feature scales differ wildly)
     freeze_after_warmup: bool = False   # ablation: stop learning after the first fit
     seed: int = 0
 
@@ -61,8 +63,8 @@ class Gate:
     def __init__(self, config: GateConfig = GateConfig()):
         self.cfg = config
         self._rng = random.Random(config.seed)
-        self._X: List[np.ndarray] = []     # verdict buffer (features)
-        self._y: List[int] = []            # verdict buffer (labels from the LLM)
+        self._X: Deque[np.ndarray] = deque(maxlen=config.buffer_max)   # verdict buffer (features)
+        self._y: Deque[int] = deque(maxlen=config.buffer_max)          # verdict buffer (LLM labels)
         self._w: Optional[np.ndarray] = None   # fitted weights, shape (N_FEATURES,)
         self._b: float = 0.0
         self.seen = 0
@@ -105,9 +107,7 @@ class Gate:
             return
         self._X.append(x)
         self._y.append(int(verdict))
-        self.n_verdicts += 1
-        if len(self._y) > self.cfg.buffer_max:          # sliding window over verdicts
-            del self._X[0], self._y[0]
+        self.n_verdicts += 1                 # the deques drop the oldest verdict automatically
         if self.n_verdicts % self.cfg.retrain_every == 0:
             self._fit()
 
@@ -115,10 +115,17 @@ class Gate:
         y = np.asarray(self._y)
         if y.min() == y.max():          # need both classes to fit a classifier
             return
+        X = np.stack(self._X)
+        mu = np.zeros(X.shape[1]); sd = np.ones(X.shape[1])
+        if self.cfg.standardize:
+            mu = X.mean(axis=0); sd = X.std(axis=0) + 1e-9
         model = LogisticRegression(class_weight="balanced", max_iter=2000)
-        model.fit(np.stack(self._X), y)
-        self._w = model.coef_[0].astype(np.float64)
-        self._b = float(model.intercept_[0])
+        model.fit((X - mu) / sd, y)
+        # Fold the scaling into the weights, so scoring stays one dot product on raw features:
+        #   w·((x - mu)/sd) + b  ==  (w/sd)·x + (b - Σ w·mu/sd)
+        w = model.coef_[0].astype(np.float64) / sd
+        self._w = w
+        self._b = float(model.intercept_[0] - w @ mu)
         self.n_fits += 1
 
     @property

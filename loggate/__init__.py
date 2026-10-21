@@ -21,6 +21,7 @@ cascade   run a stream through gate + oracle and record what happened
 """
 
 from .cascade import Cascade, run_cascade
+from .data import Example
 from .gate import Gate, GateConfig
 from .oracle import SimulatedLLM
 
