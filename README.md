@@ -208,6 +208,13 @@ tests/          pytest, no data needed
 results/        CSVs and plots from the full runs
 ```
 
+## Author's note
+
+Built with AI assistance (Claude). The problem framing, experimental design,
+decisions along the way and the analysis are mine; the AI helped write and
+debug the code and run the experiments. I'm a CS and entrepreneurship student
+at Reichman University and happy to talk about any of it.
+
 ## Data
 
 * CICIDS2017, Canadian Institute for Cybersecurity, University of New Brunswick
