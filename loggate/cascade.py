@@ -69,7 +69,10 @@ class Cascade:
         x = example.x if example.x is not None else featurize(example.session)
         forward, reason = self.gate.should_forward(x)
         if forward:
-            verdict = self.llm.judge(example.session, example.label)
+            # The LLM gets what a real backend would read: the raw session when
+            # there is one, otherwise the feature vector.  Never None.
+            observation = example.session if example.session is not None else x
+            verdict = self.llm.judge(observation, example.label)
             self.gate.observe(x, verdict)
         return forward, reason
 

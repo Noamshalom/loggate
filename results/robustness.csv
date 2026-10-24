@@ -1,9 +1,10 @@
-setting,call_rate,recall
-perfect LLM,0.0400,0.9963
-LLM misses 10% of anomalies,0.0403,0.9977
-LLM misses 20% of anomalies,0.0405,0.9977
-LLM misses 40% of anomalies,0.0390,0.9420
-LLM false-alarms on 1% of normals,0.0404,0.9987
-LLM false-alarms on 5% of normals,1.0000,1.0000
-frozen after first fit,0.0432,1.0000
-no random audit (explore=0),0.0304,0.9937
+setting,call_rate,gate_recall,end_to_end_recall
+perfect LLM,0.0400,0.9963,0.9963
+LLM misses 10% of anomalies,0.0403,0.9977,0.8979
+LLM misses 20% of anomalies,0.0405,0.9977,0.7981
+LLM misses 40% of anomalies,0.0390,0.9420,0.5652
+LLM false-alarms on 1% of normals,0.0404,0.9987,0.9987
+"LLM false-alarms on 5% of normals, threshold 0.2",1.0000,1.0000,1.0000
+"LLM false-alarms on 5% of normals, threshold 0.5",0.0397,0.9933,0.9933
+frozen after first fit,0.0432,1.0000,1.0000
+no random audit (explore=0),0.0304,0.9937,0.9937

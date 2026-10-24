@@ -15,10 +15,34 @@ def synthetic_stream(n=3000, anomaly_rate=0.03, seed=0):
 
 def test_oracle_error_rates():
     llm = SimulatedLLM(fn_rate=0.5, fp_rate=0.0, seed=0)
-    misses = sum(llm.judge([], 1) == 0 for _ in range(2000))
+    misses = sum(llm.judge(NORMAL, 1) == 0 for _ in range(2000))
     assert 900 < misses < 1100
-    assert all(llm.judge([], 0) == 0 for _ in range(100))   # fp_rate 0 -> never false alarm
+    assert all(llm.judge(NORMAL, 0) == 0 for _ in range(100))   # fp_rate 0 -> never false alarm
     assert llm.calls == 2100
+
+
+def test_oracle_refuses_missing_observation():
+    import pytest
+    with pytest.raises(ValueError):
+        SimulatedLLM().judge(None, 1)
+
+
+def test_cascade_hands_the_llm_a_real_observation():
+    """Regression: with precomputed features the LLM used to receive None."""
+    import numpy as np
+    seen = []
+
+    class Spy(SimulatedLLM):
+        def judge(self, observation, true_label):
+            seen.append(observation)
+            return super().judge(observation, true_label)
+
+    from loggate import Cascade, Gate
+    cascade = Cascade(Gate(GateConfig(warmup=5)), Spy())
+    cascade.step(Example(None, 0, np.ones(3)))          # flow-style example
+    cascade.step(Example(NORMAL, 0))                    # session-style example
+    assert isinstance(seen[0], np.ndarray) and seen[0].shape == (3,)
+    assert seen[1] == NORMAL
 
 
 def test_cascade_learns_and_cuts_calls_without_losing_anomalies():

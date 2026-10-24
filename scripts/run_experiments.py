@@ -89,29 +89,38 @@ def threshold_sweep(stream, window, thresholds=(0.5, 0.3, 0.2, 0.1, 0.05, 0.02))
 
 
 def robustness(stream, window):
+    """
+    LLM error modes.  Two recall numbers per row:
+      gate recall        share of anomalies the gate forwards (what the gate controls)
+      end-to-end recall  share of anomalies the LLM then actually flags, i.e.
+                         gate recall x (1 - miss rate).  This is what a user of the
+                         whole system sees; the gate's number alone overstates it.
+    The 5% false-alarm case is run at two thresholds because the outcome depends
+    on it (see README): the default 0.2 collapses, 0.5 does not.
+    """
     rows = []
-    settings = [("perfect LLM", 0.0, 0.0),
-                ("LLM misses 10% of anomalies", 0.10, 0.0),
-                ("LLM misses 20% of anomalies", 0.20, 0.0),
-                ("LLM misses 40% of anomalies", 0.40, 0.0),
-                ("LLM false-alarms on 1% of normals", 0.0, 0.01),
-                ("LLM false-alarms on 5% of normals", 0.0, 0.05)]
-    for name, fn, fp in settings:
-        res = run_cascade(stream, GateConfig(), llm_fn_rate=fn, llm_fp_rate=fp, window=window)
+    settings = [("perfect LLM", 0.0, 0.0, 0.2),
+                ("LLM misses 10% of anomalies", 0.10, 0.0, 0.2),
+                ("LLM misses 20% of anomalies", 0.20, 0.0, 0.2),
+                ("LLM misses 40% of anomalies", 0.40, 0.0, 0.2),
+                ("LLM false-alarms on 1% of normals", 0.0, 0.01, 0.2),
+                ("LLM false-alarms on 5% of normals, threshold 0.2", 0.0, 0.05, 0.2),
+                ("LLM false-alarms on 5% of normals, threshold 0.5", 0.0, 0.05, 0.5)]
+    for name, fn, fp, thr in settings:
+        res = run_cascade(stream, GateConfig(threshold=thr), llm_fn_rate=fn, llm_fp_rate=fp, window=window)
         cr, rc = res.steady_state()
-        rows.append((name, cr, rc))
-        print(f"[robustness] {name:<36} call rate {100*cr:6.2f}%  recall {100*rc:6.2f}%")
-    res = run_cascade(stream, GateConfig(freeze_after_warmup=True), window=window)
-    cr, rc = res.steady_state()
-    rows.append(("frozen after first fit", cr, rc))
-    print(f"[ablation] frozen gate: call rate {100*cr:.2f}%  recall {100*rc:.2f}%")
-    res = run_cascade(stream, GateConfig(explore=0.0), window=window)
-    cr, rc = res.steady_state()
-    rows.append(("no random audit (explore=0)", cr, rc))
-    print(f"[ablation] no audit: call rate {100*cr:.2f}%  recall {100*rc:.2f}%")
+        e2e = rc * (1.0 - fn)
+        rows.append((name, cr, rc, e2e))
+        print(f"[robustness] {name:<50} call rate {100*cr:6.2f}%  gate recall {100*rc:6.2f}%  end-to-end {100*e2e:6.2f}%")
+    for name, cfg in (("frozen after first fit", GateConfig(freeze_after_warmup=True)),
+                      ("no random audit (explore=0)", GateConfig(explore=0.0))):
+        res = run_cascade(stream, cfg, window=window)
+        cr, rc = res.steady_state()
+        rows.append((name, cr, rc, rc))
+        print(f"[ablation] {name:<50} call rate {100*cr:6.2f}%  gate recall {100*rc:6.2f}%")
     with open(RESULTS / "robustness.csv", "w", newline="") as fh:
-        w = csv.writer(fh); w.writerow(["setting", "call_rate", "recall"])
-        for s, cr, rc in rows: w.writerow([s, f"{cr:.4f}", f"{rc:.4f}"])
+        w = csv.writer(fh); w.writerow(["setting", "call_rate", "gate_recall", "end_to_end_recall"])
+        for s_, cr, rc, e2e in rows: w.writerow([s_, f"{cr:.4f}", f"{rc:.4f}", f"{e2e:.4f}"])
     return rows
 
 

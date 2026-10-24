@@ -9,24 +9,25 @@ the LLM is sometimes wrong?".
 The two kinds of mistake are modelled separately because they are not
 equally harmful to the gate:
 
-    fn_rate   P(LLM says "normal" | session is an anomaly)   - a miss
-    fp_rate   P(LLM says "anomaly" | session is normal)      - a false alarm
+    fn_rate   P(LLM says "normal" | event is an attack)   - a miss
+    fp_rate   P(LLM says "attack" | event is normal)      - a false alarm
 
-Anomalies are ~3% of traffic.  A false-alarm rate of even 5% therefore
-produces more wrong "anomaly" labels than there are real anomalies, and the
-gate is trained mostly on noise.  A miss rate of 20% just removes a fifth of
-the positive examples, which the gate tolerates easily.  The README shows both.
+What this simulation does NOT establish: that a real language model can
+produce good labels from the observations used here (an HDFS event sequence,
+or 77 flow statistics).  The gate experiments are valid as a study of a
+filter learning from partial, possibly noisy feedback; whether an LLM is a
+good source of that feedback for this data is an open question, stated in
+the README.
 
-This is a simulation and the README says so.  Everything the gate learns
-comes through this interface, so swapping in a real model later is a
-one-class change: implement `.judge(session, true_label) -> int` and ignore
-`true_label`.
+Interface: `judge(observation, true_label)`.  The observation is what a real
+backend would read (the raw session, or the feature vector for flows); the
+true label is what the simulation uses.  A real backend ignores `true_label`.
 """
 
 from __future__ import annotations
 
 import random
-from typing import Sequence
+from typing import Any
 
 
 class SimulatedLLM:
@@ -39,8 +40,10 @@ class SimulatedLLM:
         self._rng = random.Random(seed)
         self.calls = 0
 
-    def judge(self, session: Sequence[int], true_label: int) -> int:
-        """Return a verdict (1 = anomaly, 0 = normal) for one session."""
+    def judge(self, observation: Any, true_label: int) -> int:
+        """Return a verdict (1 = attack, 0 = normal) for one event."""
+        if observation is None:
+            raise ValueError("judge() needs the observation; a real backend would read it")
         self.calls += 1
         r = self._rng.random()
         if true_label == 1 and r < self.fn_rate:
