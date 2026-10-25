@@ -36,6 +36,7 @@ class WindowStats:
     anomalies: int
     anomalies_forwarded: int
     gate_fits: int
+    anomalies_detected: int = 0     # forwarded AND the verifier said "anomaly" (measured, not computed)
 
     @property
     def call_rate(self) -> float:
@@ -45,6 +46,10 @@ class WindowStats:
     def recall(self) -> float:
         return self.anomalies_forwarded / self.anomalies if self.anomalies else float("nan")
 
+    @property
+    def end_to_end_recall(self) -> float:
+        return self.anomalies_detected / self.anomalies if self.anomalies else float("nan")
+
 
 @dataclass
 class RunResult:
@@ -52,11 +57,17 @@ class RunResult:
     reasons: dict = field(default_factory=dict)       # forward-reason -> count, whole run
 
     def steady_state(self, last_n_windows: int = 4) -> tuple[float, float]:
-        """(call_rate, recall) pooled over the last few windows, i.e. after learning."""
+        """(call_rate, gate recall) pooled over the last few windows, i.e. after learning."""
         ws = self.windows[-last_n_windows:]
         fwd = sum(w.forwarded for w in ws); n = sum(w.sessions for w in ws)
         af = sum(w.anomalies_forwarded for w in ws); a = sum(w.anomalies for w in ws)
         return fwd / n, (af / a if a else float("nan"))
+
+    def steady_state_end_to_end(self, last_n_windows: int = 4) -> float:
+        """Share of anomalies that were forwarded AND flagged by the verifier (measured)."""
+        ws = self.windows[-last_n_windows:]
+        d = sum(w.anomalies_detected for w in ws); a = sum(w.anomalies for w in ws)
+        return d / a if a else float("nan")
 
 
 class Cascade:
@@ -65,7 +76,10 @@ class Cascade:
         self.llm = llm
 
     def step(self, example: Example) -> tuple[bool, str]:
-        """Process one session.  Returns (forwarded?, reason)."""
+        """Process one session.  Returns (forwarded?, reason).  The last verdict
+        the verifier returned (or None if nothing was forwarded) is kept in
+        `self.last_verdict`, so callers can count end-to-end detections."""
+        self.last_verdict = None
         x = example.x if example.x is not None else featurize(example.session)
         forward, reason = self.gate.should_forward(x)
         if forward:
@@ -73,6 +87,7 @@ class Cascade:
             # there is one, otherwise the feature vector.  Never None.
             observation = example.session if example.session is not None else x
             verdict = self.llm.judge(observation, example.label)
+            self.last_verdict = verdict
             self.gate.observe(x, verdict)
         return forward, reason
 
@@ -90,20 +105,21 @@ def run_cascade(
     cascade = Cascade(gate, llm)
     result = RunResult()
 
-    n = fwd = anom = anom_fwd = 0
+    n = fwd = anom = anom_fwd = anom_det = 0
     for i, ex in enumerate(stream, start=1):
         forward, reason = cascade.step(ex)
         result.reasons[reason] = result.reasons.get(reason, 0) + 1
         n += 1; fwd += forward; anom += ex.label; anom_fwd += ex.label and forward
+        anom_det += int(ex.label == 1 and cascade.last_verdict == 1)
         if n == window:
-            result.windows.append(WindowStats(i, n, fwd, anom, anom_fwd, gate.n_fits))
-            n = fwd = anom = anom_fwd = 0
+            result.windows.append(WindowStats(i, n, fwd, anom, anom_fwd, gate.n_fits, anom_det))
+            n = fwd = anom = anom_fwd = anom_det = 0
     if n and result.windows and n < window // 5:
         # a trailing sliver would be a noisy, misleading point: fold it into the last window
         last = result.windows[-1]
         result.windows[-1] = WindowStats(i, last.sessions + n, last.forwarded + fwd,
                                          last.anomalies + anom, last.anomalies_forwarded + anom_fwd,
-                                         gate.n_fits)
+                                         gate.n_fits, last.anomalies_detected + anom_det)
     elif n:
-        result.windows.append(WindowStats(i, n, fwd, anom, anom_fwd, gate.n_fits))
+        result.windows.append(WindowStats(i, n, fwd, anom, anom_fwd, gate.n_fits, anom_det))
     return result

@@ -92,9 +92,10 @@ def robustness(stream, window):
     """
     LLM error modes.  Two recall numbers per row:
       gate recall        share of anomalies the gate forwards (what the gate controls)
-      end-to-end recall  share of anomalies the LLM then actually flags, i.e.
-                         gate recall x (1 - miss rate).  This is what a user of the
-                         whole system sees; the gate's number alone overstates it.
+      end-to-end recall  share of anomalies that were forwarded AND flagged by the
+                         verifier.  Counted per event, not computed from the miss
+                         rate.  This is what a user of the whole system sees; the
+                         gate's number alone overstates it.
     The 5% false-alarm case is run at two thresholds because the outcome depends
     on it (see README): the default 0.2 collapses, 0.5 does not.
     """
@@ -109,14 +110,14 @@ def robustness(stream, window):
     for name, fn, fp, thr in settings:
         res = run_cascade(stream, GateConfig(threshold=thr), llm_fn_rate=fn, llm_fp_rate=fp, window=window)
         cr, rc = res.steady_state()
-        e2e = rc * (1.0 - fn)
+        e2e = res.steady_state_end_to_end()
         rows.append((name, cr, rc, e2e))
         print(f"[robustness] {name:<50} call rate {100*cr:6.2f}%  gate recall {100*rc:6.2f}%  end-to-end {100*e2e:6.2f}%")
     for name, cfg in (("frozen after first fit", GateConfig(freeze_after_warmup=True)),
                       ("no random audit (explore=0)", GateConfig(explore=0.0))):
         res = run_cascade(stream, cfg, window=window)
         cr, rc = res.steady_state()
-        rows.append((name, cr, rc, rc))
+        rows.append((name, cr, rc, res.steady_state_end_to_end()))
         print(f"[ablation] {name:<50} call rate {100*cr:6.2f}%  gate recall {100*rc:6.2f}%")
     with open(RESULTS / "robustness.csv", "w", newline="") as fh:
         w = csv.writer(fh); w.writerow(["setting", "call_rate", "gate_recall", "end_to_end_recall"])

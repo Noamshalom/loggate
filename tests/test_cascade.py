@@ -61,3 +61,19 @@ def test_windows_cover_the_whole_stream():
     assert [w.sessions for w in res.windows] == [500, 500, 234]
     assert res.windows[-1].end == 1234
     assert sum(res.reasons.values()) == 1234
+
+
+def test_end_to_end_recall_is_measured_not_computed():
+    """With a verifier that misses 30%, counted detections must land near 70% of
+    forwarded anomalies.  The stream is built with a different seed from the
+    oracle's: two RNGs seeded alike draw the same numbers, which would make the
+    oracle's miss decision equal the draw that created the anomaly."""
+    rng = random.Random(1)
+    stream = [Example(ANOMALY, 1) if rng.random() < 0.03 else Example(NORMAL, 0) for _ in range(6000)]
+    res = run_cascade(stream, GateConfig(warmup=200, retrain_every=100), llm_fn_rate=0.3,
+                      window=1000, seed=0)
+    _, gate_recall = res.steady_state()
+    e2e = res.steady_state_end_to_end()
+    assert gate_recall == 1.0
+    assert 0.55 < e2e < 0.85
+    assert all(w.anomalies_detected <= w.anomalies_forwarded for w in res.windows)

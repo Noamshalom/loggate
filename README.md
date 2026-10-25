@@ -1,6 +1,6 @@
 # loggate
 
-![tests](https://img.shields.io/badge/tests-21%20passing-brightgreen)
+![tests](https://img.shields.io/badge/tests-22%20passing-brightgreen)
 ![python](https://img.shields.io/badge/python-3.10%2B-blue)
 ![license](https://img.shields.io/badge/license-MIT-lightgrey)
 
@@ -157,15 +157,19 @@ and stays on the anomaly-rate floor for the remaining 565k.
 
 **What if the verifier is wrong?** Two recall columns: *gate recall* is the
 share of anomalies the gate forwards, which is what the gate controls.
-*End-to-end* is gate recall times the verifier's own hit rate, i.e. what a user
-of the whole system would see under the simulation's assumptions. The first
-number alone overstates the system.
+*End-to-end* is the share of anomalies that were forwarded **and** then
+flagged by the verifier. It is counted per event in the run, not computed
+from the miss rate, and it is what a user of the whole system would see under
+the simulation's assumptions. The first number alone overstates the system.
+
+All rows: full 575k stream, seed 0, steady state over the last 100k sessions
+(`scripts/run_experiments.py`, `robustness()`).
 
 | verifier behaviour | sessions forwarded | gate recall | end-to-end recall |
 |---|---:|---:|---:|
 | perfect verifier (threshold 0.2) | 4.00% | 99.63% | 99.63% |
-| misses 20% of anomalies | 4.05% | 99.77% | 79.81% |
-| misses 40% of anomalies | 3.90% | 94.20% | 56.52% |
+| misses 20% of anomalies | 4.05% | 99.77% | 79.85% |
+| misses 40% of anomalies | 3.90% | 94.20% | 54.70% |
 | false-alarms on 1% of normals | 4.04% | 99.87% | 99.87% |
 | false-alarms on 5% of normals, threshold 0.2 | 100.00% | 100.00% | 100.00% |
 | false-alarms on 5% of normals, threshold 0.5 | 3.97% | 99.33% | 99.33% |
@@ -185,7 +189,8 @@ Two readings:
   (`class_weight="balanced"` inflates them), and 0.2 is simply too low for a
   noisy teacher. The 0.5 setting was chosen after seeing the 0.2 result, so it
   shows that collapse is avoidable, not that 0.5 is the right threshold in
-  general.
+  general. (A first check of this on the first 150k sessions gave 3.95% /
+  99.8%; the table reports the full stream.)
 
 Full tables (threshold sweep, robustness, ablations): `results/*.csv`.
 
@@ -253,7 +258,7 @@ In rough order of importance:
 
 ```bash
 pip install -e ".[dev]"
-pytest                                   # 21 tests, no data needed
+pytest                                   # 22 tests, no data needed
 
 scripts/get_data.sh                      # HDFS sessions, ~30 MB
 python scripts/run_experiments.py        # Result 2, ~10 min
