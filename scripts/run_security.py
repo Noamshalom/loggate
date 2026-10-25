@@ -31,6 +31,7 @@ import numpy as np
 
 from loggate import Cascade, Gate, GateConfig, SimulatedLLM
 from loggate.cicids import load_phases
+from loggate.seeds import derive
 
 ROOT = Path(__file__).resolve().parents[1]
 DATA = ROOT / "data" / "cicids2017"
@@ -59,7 +60,7 @@ def run_one(args):
     tue, fri = _phases(seed)
     gate = Gate(GateConfig(explore=explore, retrain_every=retrain, buffer_max=buf,
                            standardize=True, seed=seed))
-    cascade = Cascade(gate, SimulatedLLM(seed=seed))
+    cascade = Cascade(gate, SimulatedLLM(seed=derive(seed, "oracle")))
 
     # phase 1: measure only the second half, after the gate has learned
     half = len(tue) // 2

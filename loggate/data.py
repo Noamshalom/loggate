@@ -27,6 +27,8 @@ from typing import Iterator, List, Optional, Sequence
 
 import numpy as np
 
+from .seeds import derive
+
 Session = List[int]
 
 FILES = {
@@ -71,7 +73,7 @@ def load_stream(data_dir: Path | str, seed: int = 0, limit: int | None = None) -
                 f"{path} not found. Run scripts/get_data.sh to download the HDFS sessions."
             )
         examples.extend(Example(s, label) for s in read_sessions(path))
-    random.Random(seed).shuffle(examples)
+    random.Random(derive(seed, "data")).shuffle(examples)   # own stream, see seeds.py
     return examples[:limit] if limit else examples
 
 

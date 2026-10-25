@@ -26,6 +26,7 @@ from .data import Example
 from .features import featurize
 from .gate import Gate, GateConfig
 from .oracle import SimulatedLLM
+from .seeds import derive
 
 
 @dataclass
@@ -101,7 +102,7 @@ def run_cascade(
     seed: int = 0,
 ) -> RunResult:
     gate = Gate(gate_config)
-    llm = SimulatedLLM(fn_rate=llm_fn_rate, fp_rate=llm_fp_rate, seed=seed)
+    llm = SimulatedLLM(fn_rate=llm_fn_rate, fp_rate=llm_fp_rate, seed=derive(seed, "oracle"))
     cascade = Cascade(gate, llm)
     result = RunResult()
 

@@ -125,6 +125,48 @@ def robustness(stream, window):
     return rows
 
 
+
+SEED_ROWS = [("default (threshold 0.2)", dict(), 0.0, 0.0),
+             ("threshold 0.3", dict(threshold=0.3), 0.0, 0.0),
+             ("verifier misses 40% of anomalies", dict(), 0.4, 0.0),
+             ("verifier false-alarms on 5% of normals, threshold 0.2", dict(), 0.0, 0.05),
+             ("verifier false-alarms on 5% of normals, threshold 0.5", dict(threshold=0.5), 0.0, 0.05),
+             ("no random audit (explore=0)", dict(explore=0.0), 0.0, 0.0)]
+
+
+def _seed_job(args):
+    data_dir, i, s, window = args
+    name, cfg, fn, fp = SEED_ROWS[i]
+    stream = load_stream(data_dir, seed=s)
+    res = run_cascade(stream, GateConfig(seed=s, **cfg), llm_fn_rate=fn, llm_fp_rate=fp, window=window, seed=s)
+    cr, rc = res.steady_state()
+    return i, s, cr, rc, res.steady_state_end_to_end()
+
+
+def seed_check(data_dir, window, seeds=(0, 1, 2), workers=2):
+    """
+    The rows the README relies on, repeated over several master seeds.  Each seed
+    changes the stream order, the gate's audit draws and the verifier's errors
+    (independent streams, see loggate/seeds.py).  Single-seed numbers on HDFS move
+    by up to a few points between seeds, so the README reports mean and min-max.
+    """
+    from multiprocessing import Pool
+    jobs = [(data_dir, i, s, window) for s in seeds for i in range(len(SEED_ROWS))]
+    with Pool(workers) as pool:
+        out = pool.map(_seed_job, jobs)
+    with open(RESULTS / "hdfs_seeds.csv", "w", newline="") as fh:
+        w = csv.writer(fh)
+        w.writerow(["setting", "seed", "call_rate", "gate_recall", "end_to_end_recall"])
+        for i, s, cr, rc, e2e in sorted(out, key=lambda o: (o[0], o[1])):
+            w.writerow([SEED_ROWS[i][0], s, f"{cr:.4f}", f"{rc:.4f}", f"{e2e:.4f}"])
+    for i, (name, *_) in enumerate(SEED_ROWS):
+        rs = [o for o in out if o[0] == i]
+        c = [100 * o[2] for o in rs]; r = [100 * o[3] for o in rs]; e = [100 * o[4] for o in rs]
+        print(f"[seeds] {name:<52} forwarded {sum(c)/len(c):6.2f}% [{min(c):.2f}-{max(c):.2f}]  "
+              f"gate recall {sum(r)/len(r):6.2f}% [{min(r):.2f}-{max(r):.2f}]  "
+              f"end-to-end {sum(e)/len(e):6.2f}% [{min(e):.2f}-{max(e):.2f}]", flush=True)
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--data", default=str(ROOT / "data"))
@@ -141,6 +183,7 @@ def main():
     learning_curve(stream, args.window)
     threshold_sweep(stream, args.window)
     robustness(stream, args.window)
+    seed_check(args.data, args.window)
     print(f"done in {time.time()-t0:.0f}s; see {RESULTS}/")
 
 

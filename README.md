@@ -1,14 +1,14 @@
 # loggate
 
-![tests](https://img.shields.io/badge/tests-22%20passing-brightgreen)
+![tests](https://img.shields.io/badge/tests-23%20passing-brightgreen)
 ![python](https://img.shields.io/badge/python-3.10%2B-blue)
 ![license](https://img.shields.io/badge/license-MIT-lightgrey)
 
 **A simulation study of a self-training gate in front of an expensive verifier: how a cheap filter that learns only from the verifier's verdicts behaves on real security traffic, and what happens when an attack it has never seen arrives.**
 
 > **TL;DR** - In simulation, a logistic-regression gate that learns only from
-> the verdicts of an oracle "LLM" forwards ~4% of HDFS log sessions at 99.6%
-> gate recall, and ~5-11% of CICIDS2017 network flows at 99% gate recall on
+> the verdicts of an oracle "LLM" forwards ~3.9% of HDFS log sessions at 99.8%
+> gate recall (3 seeds), and ~5-11% of CICIDS2017 network flows at 99% gate recall on
 > known attacks. Against an attack class absent from its training traffic, the
 > gate with no random audit forwarded **zero** DDoS flows in 100k flows; with a
 > 5% audit and fast retraining it adapted (90% of DDoS forwarded) after ~17k
@@ -36,7 +36,8 @@ event ──► Gate (one dot product) ──[suspicious?]──► LLM (expensi
 Two questions, two datasets:
 
 1. **How much does it save?** On 575k HDFS log sessions the gate ends up
-   forwarding **4.0%** of traffic while **99.6%** of anomalies still reach the verifier.
+   forwarding **3.9%** of traffic while **99.8%** of anomalies still reach the verifier
+   (mean over 3 seeds).
 2. **What happens when a *new kind* of attack arrives?** On CICIDS2017 network
    traffic a gate trained during password brute-force attacks meets a DDoS
    absent from its training traffic. With no random audit it forwarded no DDoS
@@ -142,57 +143,64 @@ costs. Neither price is in this repo; the trade-off curve is.
 ## Result 2 - how much it saves at scale (HDFS)
 
 575 059 real HDFS log sessions (2.93% anomalous), replayed as one shuffled
-stream. Steady state, seed 0:
+stream. Each row below is the mean over 3 master seeds, with min-max in
+brackets. A seed sets the stream order, the gate's audit draws and the
+verifier's errors, each from its own independent stream
+(`loggate/seeds.py`). Steady state = the last 100k sessions.
+Reproduce with `scripts/run_experiments.py` (`seed_check()`; per-seed values
+in `results/hdfs_seeds.csv`).
 
-| threshold | sessions forwarded | anomalies reaching LLM |
-|----------:|-------------------:|-----------------------:|
-| 0.5 | 3.93% | 98.27% |
-| 0.2 (default) | 4.00% | 99.63% |
-| 0.02 | 4.11% | 99.93% |
+*Gate recall* is the share of anomalies the gate forwards, which is what the
+gate controls. *End-to-end* is the share of anomalies that were forwarded
+**and** then flagged by the verifier, counted per event (not computed from
+the miss rate). It is what a user of the whole system would see under the
+simulation's assumptions; gate recall alone overstates the system.
+
+| verifier / setting | sessions forwarded | gate recall | end-to-end |
+|---|---:|---:|---:|
+| perfect verifier, threshold 0.2 (default) | 3.91% [3.83-3.97] | 99.76% [99.73-99.79] | 99.76% [99.73-99.79] |
+| perfect verifier, threshold 0.3 | 3.88% [3.82-3.98] | 98.50% [96.27-99.69] | 98.50% [96.27-99.69] |
+| misses 40% of anomalies | 3.96% [3.91-4.00] | 99.80% [99.59-99.90] | 59.21% [58.77-59.94] |
+| false-alarms on 5% of normals, threshold 0.2 | 100.00% [99.99-100.00] | 100.00% [100.00-100.00] | 100.00% [100.00-100.00] |
+| false-alarms on 5% of normals, threshold 0.5 | 3.89% [3.79-3.95] | 99.52% [99.34-99.62] | 99.52% [99.34-99.62] |
+| perfect verifier, no random audit | 2.92% [2.87-2.96] | 98.34% [96.07-99.55] | 98.34% [96.07-99.55] |
 
 ![learning curve](results/learning_curve.png)
 
 The gate goes from forwarding everything to ~4% within the first 10k sessions
-and stays on the anomaly-rate floor for the remaining 565k.
+and stays near the anomaly-rate floor for the rest of the stream (seed 0 shown).
 
-**What if the verifier is wrong?** Two recall columns: *gate recall* is the
-share of anomalies the gate forwards, which is what the gate controls.
-*End-to-end* is the share of anomalies that were forwarded **and** then
-flagged by the verifier. It is counted per event in the run, not computed
-from the miss rate, and it is what a user of the whole system would see under
-the simulation's assumptions. The first number alone overstates the system.
+What the table supports:
 
-All rows: full 575k stream, seed 0, steady state over the last 100k sessions
-(`scripts/run_experiments.py`, `robustness()`).
+* **The headline is stable across seeds:** ~3.9% of sessions forwarded at
+  ~99.8% gate recall, with a narrow range.
+* **Verifier misses pass straight through to the system.** A verifier that
+  misses 40% of anomalies leaves gate recall at ~99.8%, but end-to-end
+  detection falls to ~59%.
+* **The 5% false-alarm collapse depends on the threshold, on every seed.** At
+  0.2 the gate forwards everything; at 0.5 it forwards ~3.9% at ~99.5% gate
+  recall. An earlier version of this README explained the collapse as a
+  base-rate inevitability. That was wrong: the same label noise does not
+  collapse the gate at 0.5. The gate's scores are not calibrated
+  probabilities (`class_weight="balanced"` inflates them), and 0.2 is too low
+  for a noisy teacher. The 0.5 setting was chosen after seeing the 0.2
+  result, so it shows that collapse is avoidable, not that 0.5 is the right
+  threshold in general.
+* **Single-seed numbers on HDFS are noisy at the level of a few points.**
+  Threshold 0.3 gave 96.3% gate recall on one seed and 99.7% on another;
+  removing the audit gave between 96.1% and 99.6%. Differences of that size
+  between single runs should not be read as effects.
 
-| verifier behaviour | sessions forwarded | gate recall | end-to-end recall |
-|---|---:|---:|---:|
-| perfect verifier (threshold 0.2) | 4.00% | 99.63% | 99.63% |
-| misses 20% of anomalies | 4.05% | 99.77% | 79.85% |
-| misses 40% of anomalies | 3.90% | 94.20% | 54.70% |
-| false-alarms on 1% of normals | 4.04% | 99.87% | 99.87% |
-| false-alarms on 5% of normals, threshold 0.2 | 100.00% | 100.00% | 100.00% |
-| false-alarms on 5% of normals, threshold 0.5 | 3.97% | 99.33% | 99.33% |
+Two corrections to earlier versions of this repo, both found in review: the
+gate, the verifier and the data shuffle used to share one random sequence
+(fixed; the CICIDS2017 results were rerun under the fix and came out
+bit-identical, because their verifier is error-free and their sampling uses a
+separate generator); and an earlier single-seed table showed gate recall
+dropping to 94% when the verifier misses 40%, which does not reproduce across
+seeds and has been removed.
 
-Two readings:
-
-* **Verifier misses degrade the gate gracefully, but they are not free.** A
-  verifier that overlooks 20% of anomalies leaves the gate's recall intact
-  (it just sees fewer positives), but the system as a whole then detects ~80%,
-  not ~100%.
-* **The 5% false-alarm collapse depends on the threshold.** At the default
-  threshold 0.2 the gate forwards everything; at threshold 0.5 it does not.
-  An earlier version of this README explained the collapse as a base-rate
-  inevitability (more wrong "anomaly" labels than real anomalies). That
-  explanation was wrong: the same label noise does not collapse the gate at
-  0.5. The gate's scores are not calibrated probabilities
-  (`class_weight="balanced"` inflates them), and 0.2 is simply too low for a
-  noisy teacher. The 0.5 setting was chosen after seeing the 0.2 result, so it
-  shows that collapse is avoidable, not that 0.5 is the right threshold in
-  general. (A first check of this on the first 150k sessions gave 3.95% /
-  99.8%; the table reports the full stream.)
-
-Full tables (threshold sweep, robustness, ablations): `results/*.csv`.
+Other single-seed tables (threshold sweep, more verifier error rates,
+frozen-gate ablation): `results/*.csv`.
 
 ## What is and isn't new here
 
@@ -211,7 +219,8 @@ algorithm is not.
 Shown, in simulation:
 
 * A gate trained only on a verifier's verdicts can forward a few percent of
-  traffic while forwarding ~99% of known anomalies (HDFS, CICIDS2017).
+  traffic while forwarding ~99% of known anomalies (HDFS, 3 seeds; CICIDS2017,
+  3 seeds).
 * Without a random audit, the gate forwarded no flow of an attack class
   absent from its training traffic, over 100k flows; audit rate and retrain
   cadence control how fast it adapts.
@@ -258,10 +267,10 @@ In rough order of importance:
 
 ```bash
 pip install -e ".[dev]"
-pytest                                   # 22 tests, no data needed
+pytest                                   # 23 tests, no data needed
 
 scripts/get_data.sh                      # HDFS sessions, ~30 MB
-python scripts/run_experiments.py        # Result 2, ~10 min
+python scripts/run_experiments.py        # Result 2, ~30 min on 2 cores
 
 # Result 1: download MachineLearningCSV.zip from
 # https://www.unb.ca/cic/datasets/ids-2017.html and put these two files in data/cicids2017/:
@@ -286,6 +295,7 @@ loggate/
   gate.py       classifier + forwarding policy (warm-up / threshold / audit)
   cascade.py    run a stream through gate + LLM, record per-window stats
   oracle.py     simulated LLM with miss and false-alarm rates
+  seeds.py      independent random streams derived from one master seed
   data.py       HDFS sessions as a labelled, shuffled stream
   features.py   log session -> count vector
   cicids.py     CICIDS2017 flows -> features; Tuesday / Friday phases

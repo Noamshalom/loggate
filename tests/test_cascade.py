@@ -77,3 +77,15 @@ def test_end_to_end_recall_is_measured_not_computed():
     assert gate_recall == 1.0
     assert 0.55 < e2e < 0.85
     assert all(w.anomalies_detected <= w.anomalies_forwarded for w in res.windows)
+
+
+def test_random_streams_are_independent():
+    """Regression: gate, data shuffle and verifier used to share identical sequences."""
+    from loggate.seeds import derive
+    master = 0
+    streams = {name: random.Random(s) for name, s in
+               (("gate", master), ("data", derive(master, "data")), ("oracle", derive(master, "oracle")))}
+    draws = {name: [r.random() for _ in range(50)] for name, r in streams.items()}
+    assert draws["gate"] != draws["data"] != draws["oracle"] != draws["gate"]
+    assert derive(0, "oracle") == derive(0, "oracle")          # still reproducible
+    assert derive(0, "oracle") != derive(1, "oracle")

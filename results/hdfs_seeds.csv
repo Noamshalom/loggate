@@ -1,0 +1,19 @@
+setting,seed,call_rate,gate_recall,end_to_end_recall
+default (threshold 0.2),0,0.0393,0.9973,0.9973
+default (threshold 0.2),1,0.0383,0.9979,0.9979
+default (threshold 0.2),2,0.0397,0.9976,0.9976
+threshold 0.3,0,0.0383,0.9627,0.9627
+threshold 0.3,1,0.0382,0.9955,0.9955
+threshold 0.3,2,0.0398,0.9969,0.9969
+verifier misses 40% of anomalies,0,0.0397,0.9959,0.5994
+verifier misses 40% of anomalies,1,0.0391,0.9990,0.5893
+verifier misses 40% of anomalies,2,0.0400,0.9990,0.5877
+"verifier false-alarms on 5% of normals, threshold 0.2",0,0.9999,1.0000,1.0000
+"verifier false-alarms on 5% of normals, threshold 0.2",1,1.0000,1.0000,1.0000
+"verifier false-alarms on 5% of normals, threshold 0.2",2,1.0000,1.0000,1.0000
+"verifier false-alarms on 5% of normals, threshold 0.5",0,0.0393,0.9962,0.9962
+"verifier false-alarms on 5% of normals, threshold 0.5",1,0.0379,0.9934,0.9934
+"verifier false-alarms on 5% of normals, threshold 0.5",2,0.0395,0.9959,0.9959
+no random audit (explore=0),0,0.0287,0.9607,0.9607
+no random audit (explore=0),1,0.0292,0.9941,0.9941
+no random audit (explore=0),2,0.0296,0.9955,0.9955
